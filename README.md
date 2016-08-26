@@ -15,6 +15,7 @@ What is done:
 * simple meshes
 * simple camera
 * z-buffer
+* no comments
 
 ![ascii-renderer](https://github.com/thedmd/ascii-render/blob/master/screenshots/grayscale-renderer.jpg)
 
