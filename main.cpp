@@ -3,6 +3,7 @@
 #include "drawing.h"
 #include "math.h"
 #include "mesh.h"
+#include "imgui/imgui.h"
 
 #include <vector>
 #include <algorithm>
@@ -23,6 +24,52 @@ struct toaster_framebuffer_t final: framebuffer_t
     {
     }
 
+    void fill_rect_2d(int x0, int y0, int x1, int y1, float color) override final
+    {
+        auto pixel = color_to_pixel(color);
+
+        if (x0 > x1) std::swap(x0, x1);
+        if (y0 > y1) std::swap(y0, y1);
+
+        auto out_row = colors.data() + x0 + y0 * width;
+        for (int y = y0; y < y1; ++y, out_row += width)
+        {
+            auto out = out_row;
+            for (int x = x0; x < x1; ++x, ++out)
+                *out = pixel;
+        }
+    }
+
+    virtual void char_2d(const font_t& font, int x, int y, char c, float color) override final
+    {
+        auto data = font.find(c);
+        if (!data)
+            return;
+
+        typedef bool (*unpack_font_proc)(const uint8_t* data, int x, int y);
+
+        unpack_font_proc unpack_font = nullptr;
+        switch (font.pack)
+        {
+            case font_pack_row_low:     unpack_font = [](const uint8_t* data, int x, int y) { return (data[x] & (1 <<      y))  != 0; }; break;
+            case font_pack_row_high:    unpack_font = [](const uint8_t* data, int x, int y) { return (data[x] & (1 << (7 - y))) != 0; }; break;
+            case font_pack_column_low:  unpack_font = [](const uint8_t* data, int x, int y) { return (data[y] & (1 <<      x))  != 0; }; break;
+            case font_pack_column_high: unpack_font = [](const uint8_t* data, int x, int y) { return (data[y] & (1 << (7 - x))) != 0; }; break;
+            default: return;
+        }
+
+        auto color_pixel = color_to_pixel(color);
+        auto bg_pixel    = color_to_pixel(0);
+
+        auto out_row = colors.data() + x + y * width;
+        for (int y = 0; y < font.h; ++y, out_row += width)
+        {
+            auto out = out_row;
+            for (int x = 0; x < font.w; ++x, ++out)
+                *out = unpack_font(data, x, y) ? color_pixel : bg_pixel;
+        }
+    }
+
 protected:
     virtual void clear_color(float c) override final
     {
@@ -34,13 +81,30 @@ protected:
         auto back  = colors[x + width * y];
         auto pixel = color_to_pixel(c);
 
-        // pixel.a = 128;
-        //
-        // pixel.r = (int)back.r + ((int)pixel.r - (int)back.r) * pixel.a / 255;
-        // pixel.g = (int)back.g + ((int)pixel.g - (int)back.g) * pixel.a / 255;
-        // pixel.b = (int)back.b + ((int)pixel.b - (int)back.b) * pixel.a / 255;
-
         colors[x + width * y] = pixel;
+    }
+
+    virtual void blend_color(int x, int y, float c, float a) override final
+    {
+        auto back  = colors[x + width * y];
+        auto pixel = color_to_pixel(c);
+
+        auto ia = (int)(a * 255);
+
+        pixel.r = (int)back.r + ((int)pixel.r - (int)back.r) * ia / 255;
+        pixel.g = (int)back.g + ((int)pixel.g - (int)back.g) * ia / 255;
+        pixel.b = (int)back.b + ((int)pixel.b - (int)back.b) * ia / 255;
+
+        colors[x + y * width] = pixel;
+    }
+
+    virtual void commit_impl() override final
+    {
+    }
+
+    virtual void present_impl() override final
+    {
+        display.update(colors);
     }
 
 private:
@@ -60,12 +124,12 @@ struct ascii_font_t
 
 struct ascii_framebuffer_t final: framebuffer_t
 {
-    framebuffer_t&    buffer;
-    const font_t&     font;
-    std::vector<char> color;
-    int               font_width;
-    int               font_height;
-    std::vector<char> palette;
+    framebuffer_t&     buffer;
+    const font_t&      font;
+    std::vector<float> color;
+    int                font_width;
+    int                font_height;
+    std::vector<char>  palette;
 
     ascii_framebuffer_t(framebuffer_t& buffer, const ascii_font_t& font):
         framebuffer_t(buffer.width / (font.font.w + font.padding), buffer.height / (font.font.h + font.padding)),
@@ -78,7 +142,108 @@ struct ascii_framebuffer_t final: framebuffer_t
     {
     }
 
+    void dither(bool useZbuffer)
+    {
+        const auto palette_size = (float)palette.size();
+
+        const auto width = this->width;
+        const auto height = this->height;
+
+        const auto k1Per15 = 1.0f / (palette_size - 1);
+        const auto k1Per16 = 1.0f / 16.0f;
+        const auto k3Per16 = 3.0f / 16.0f;
+        const auto k5Per16 = 5.0f / 16.0f;
+        const auto k7Per16 = 7.0f / 16.0f;
+
+        int x = 0, y = 0;
+        auto depth = this->depth.data();
+        for (auto pixel = color.data(), pixelEnd = color.data() + color.size(); pixel < pixelEnd; ++pixel, ++x, ++depth)
+        {
+            if (x == width)
+            {
+                x = 0;
+                ++y;
+            }
+
+            auto c = *pixel;
+            auto c2 = std::min(1.0f, std::max(0.0f, floorf(c * palette_size) * k1Per15));
+            auto ce = c - c2;
+
+            *pixel = c2;
+
+            auto n1 = pixel + 1;
+            auto n2 = pixel + width - 1;
+            auto n3 = pixel + width;
+            auto n4 = pixel + width + 1;
+
+            auto d1 = depth + 1;
+            auto d2 = depth + width - 1;
+            auto d3 = depth + width;
+            auto d4 = depth + width + 1;
+
+            if (x < width - 1)
+                *n1 += (ce * k7Per16) * (useZbuffer ? std::min(1.0f, std::max(1.0f - fabsf(*depth - *d1), 0.0f)) : 1.0f);
+
+            if (y < height - 1)
+            {
+                *n3 += ce * k5Per16 * (useZbuffer ? std::min(1.0f, std::max(1.0f - fabsf(*depth - *d3), 0.0f)) : 1.0f);
+
+                if (x > 0)
+                    *n2 += ce * k3Per16 * (useZbuffer ? std::min(1.0f, std::max(1.0f - fabsf(*depth - *d2), 0.0f)) : 1.0f);
+
+                if (x < height - 1)
+                    *n4 += ce * k1Per16 * (useZbuffer ? std::min(1.0f, std::max(1.0f - fabsf(*depth - *d4), 0.0f)) : 1.0f);
+            }
+        }
+    }
+
 protected:
+    virtual void clear_color(float c) override final
+    {
+        color.assign(width * height, c);
+        buffer.clear(c);
+    }
+
+    virtual void set_color(int x, int y, float c) override final
+    {
+        color[x + y * width] = c;
+    }
+
+    virtual void blend_color(int x, int y, float c, float a) override final
+    {
+        color[x + y * width] += (c - color[x + y * width]) * a;
+    }
+
+    virtual void commit_impl() override final
+    {
+        int x = 0, y = 0;
+        for (auto pixel = color.data(), pixelEnd = color.data() + color.size(); pixel < pixelEnd; ++pixel, ++x)
+        {
+            if (x == width)
+            {
+                x = 0;
+                ++y;
+            }
+
+            auto color = *pixel;
+
+            if (color == 0.0f)
+                continue;
+
+            auto c = color_to_char(color);
+
+            buffer.char_2d(font, x * font_width, y * font_height, c, 1.0f);
+
+            // buffer.fill_rect_2d(x * font_width, y * font_height, x * font_width + font_width - 1, y * font_height + font_height - 1, color);
+        }
+    }
+
+    virtual void present_impl() override final
+    {
+        buffer.present();
+    }
+
+private:
     char color_to_char(float c) const
     {
         c = std::min(1.0f, std::max(0.0f, c));
@@ -87,21 +252,111 @@ protected:
 
         return palette[index];
     }
+};
 
-    virtual void clear_color(float c) override final
+static framebuffer_t* imgui_render_target = nullptr;
+static void render_draw_lists(ImDrawData* draw_data)
+{
+    for (int n = 0; n < draw_data->CmdListsCount; n++)
     {
-        auto v = color_to_char(c);
-        color.assign(width * height, v);
+        const ImDrawList* const cmd_list = draw_data->CmdLists[n];
 
-        buffer.clear(c);
+        auto& vertices = cmd_list->VtxBuffer;
+        auto& indices  = cmd_list->IdxBuffer;
+
+        int idx_offset = 0;
+        for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.size(); cmd_i++)
+        {
+            const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[cmd_i];
+            if (pcmd->UserCallback)
+            {
+                pcmd->UserCallback(cmd_list, pcmd);
+            }
+            else if (pcmd->ElemCount > 0)
+            {
+                auto* const indexStart = indices.Data + idx_offset;
+
+                for (unsigned int i = 0; i < pcmd->ElemCount; i += 3)
+                {
+                    const auto i0 = indexStart[i + 0];
+                    const auto i1 = indexStart[i + 1];
+                    const auto i2 = indexStart[i + 2];
+
+                    const auto v0 = vertices[i0];
+                    const auto v1 = vertices[i1];
+                    const auto v2 = vertices[i2];
+
+                    const auto vc0 = ImColor(v0.col);
+                    const auto vc1 = ImColor(v1.col);
+                    const auto vc2 = ImColor(v2.col);
+
+                    const auto c0 = (vc0.Value.x + vc0.Value.y + vc0.Value.z) / 3;
+                    const auto c1 = (vc1.Value.x + vc1.Value.y + vc1.Value.z) / 3;
+                    const auto c2 = (vc2.Value.x + vc2.Value.y + vc2.Value.z) / 3;
+
+                    if (pcmd->TextureId)
+                    {
+                        auto& image = *reinterpret_cast<image_t*>(pcmd->TextureId);
+
+                        generic_triangle_2d(*imgui_render_target, image,
+                            v0.pos.x, v0.pos.y,
+                            v2.pos.x, v2.pos.y,
+                            v1.pos.x, v1.pos.y,
+                            v0.uv.x, v0.uv.y,
+                            v2.uv.x, v2.uv.y,
+                            v1.uv.x, v1.uv.y,
+                            c0, c2, c1,
+                            vc0.Value.w, vc2.Value.w, vc1.Value.w);
+                    }
+                    else
+                    {
+                        generic_triangle_2d(*imgui_render_target,
+                            static_cast<int>(v0.pos.x), static_cast<int>(v0.pos.y),
+                            static_cast<int>(v2.pos.x), static_cast<int>(v2.pos.y),
+                            static_cast<int>(v1.pos.x), static_cast<int>(v1.pos.y),
+                            c0);
+                    }
+                }
+
+                //fill_rect_2d(*imgui_render_target, (int)min.x, (int)min.y, (int)max.x, (int)max.y, 1.0f);
+
+                //const D3D10_RECT r = { (LONG)pcmd->ClipRect.x, (LONG)pcmd->ClipRect.y, (LONG)pcmd->ClipRect.z, (LONG)pcmd->ClipRect.w };
+                //ctx->PSSetShaderResources(0, 1, (ID3D10ShaderResourceView**)&pcmd->TextureId);
+                //ctx->RSSetScissorRects(1, &r);
+                //ctx->DrawIndexed(pcmd->ElemCount, idx_offset, vtx_offset);
+            }
+            idx_offset += pcmd->ElemCount;
+        }
+    }
+}
+
+struct imgui_listener final: public PixelToaster::Listener
+{
+    virtual void onMouseButtonDown(PixelToaster::DisplayInterface& display, PixelToaster::Mouse mouse) override final
+    {
+        auto& io = ImGui::GetIO();
+        io.MousePos.x = mouse.x * imgui_render_target->width  / display.width();
+        io.MousePos.y = mouse.y * imgui_render_target->height / display.height();
+        if (mouse.buttons.left)   io.MouseDown[0] = true;
+        if (mouse.buttons.right)  io.MouseDown[1] = true;
+        if (mouse.buttons.middle) io.MouseDown[2] = true;
     }
 
-    virtual void set_color(int x, int y, float c) override final
+    virtual void onMouseButtonUp(PixelToaster::DisplayInterface& display, PixelToaster::Mouse mouse) override final
     {
-        auto v = color_to_char(c);
-        color[x + y * width] = v;
+        auto& io = ImGui::GetIO();
+        io.MousePos.x = mouse.x * imgui_render_target->width / display.width();
+        io.MousePos.y = mouse.y * imgui_render_target->height / display.height();
+        if (io.MouseDown[0] && !mouse.buttons.left)   io.MouseDown[0] = false;
+        if (io.MouseDown[1] && !mouse.buttons.right)  io.MouseDown[1] = false;
+        if (io.MouseDown[2] && !mouse.buttons.middle) io.MouseDown[2] = false;
+    }
 
-        char_2d(buffer, font, x * font_width, y * font_height, v, 1.0f);
+    virtual void onMouseMove(PixelToaster::DisplayInterface& display, PixelToaster::Mouse mouse) override final
+    {
+        auto& io = ImGui::GetIO();
+        io.MousePos.x = mouse.x * imgui_render_target->width / display.width();
+        io.MousePos.y = mouse.y * imgui_render_target->height / display.height();
     }
 };
 
@@ -110,6 +365,8 @@ int wmain()
     namespace pt = PixelToaster;
 
     pt::Display display("ASCII Renderer", 1440, 800);
+    imgui_listener listener;
+    display.listener(&listener);
 
     pt::Timer timer;
 
@@ -119,23 +376,8 @@ int wmain()
     const auto ascii_font_8x8  = ascii_font_t{ get_font_8x8(),  " .',\";o%O8@#", 0 };
     const auto ascii_font_8x13 = ascii_font_t{ get_font_8x13(), " .',;\"o#@%O8", 0 };
 
-    auto& font   = get_font_8x8();
-    auto  buffer = ascii_framebuffer_t(display_buffer, ascii_font_8x8);
-    //auto& buffer = display_buffer;
-
-    const float window_w      = (float)display_buffer.width;
-    const float window_h      = (float)display_buffer.height;
-    const float window_aspect = window_w / window_h;
-
-    const float viewportX = 0.0f;
-    const float viewportY = 0.0f;
-    const float viewportW = (float)buffer.width;
-    const float viewportH = (float)buffer.height;
-    const float minZ      = 0.0f;
-    const float maxZ      = 1.0f;
-
-    const auto view       = matrix4::lookAtLH(vec3(0, -50, 0), vec3(0, 0, 0), vec3(0, 0, 1));
-    const auto projection = matrix4::perspectiveFovLH((float)M_PI / 4.0f, window_aspect, 1.0f, 500.0f);
+    auto& font         = get_font_8x8();
+    auto  ascii_buffer = ascii_framebuffer_t(display_buffer, ascii_font_8x8);
 
     std::vector<vertex_t> vertices;
 
@@ -157,12 +399,64 @@ int wmain()
     };
     int object_count = sizeof(objects) / sizeof(*objects);
 
+    image_t font_atlas = {};
+    {
+        auto& io = ImGui::GetIO();
+        io.RenderDrawListsFn = render_draw_lists;
+
+        unsigned char* pixels;
+        int width, height;
+        io.Fonts->GetTexDataAsAlpha8(&pixels, &width, &height);
+
+        font_atlas.data   = pixels;
+        font_atlas.width  = width;
+        font_atlas.height = height;
+        font_atlas.pitch  = width;
+
+        io.Fonts->TexID = &font_atlas;
+    }
+    imgui_render_target = &display_buffer;
+
+    bool pause                = false;
+    bool use_ascii_buffer     = true;
+    bool dither_ascii_buffer  = true;
+    bool dither_with_z_buffer = true;
+    int  current_font         = 1;
+
     timer.reset();
+    float time = 0.0f;
     while (display.open())
     {
-        buffer.clear(0, 1.0f);
+        auto deltaTime = static_cast<float>(timer.delta());
 
-        auto time = (float)timer.time();
+        if (!pause)
+            time += deltaTime;
+
+        auto& io = ImGui::GetIO();
+        io.DisplaySize.x = static_cast<float>(imgui_render_target->width);
+        io.DisplaySize.y = static_cast<float>(imgui_render_target->height);
+        io.DeltaTime     = deltaTime;
+
+        ImGui::NewFrame();
+
+        auto& buffer = *(use_ascii_buffer ? (framebuffer_t*)&ascii_buffer : (framebuffer_t*)&display_buffer);
+
+        const float window_w      = (float)display_buffer.width;
+        const float window_h      = (float)display_buffer.height;
+        const float window_aspect = window_w / window_h;
+
+        const float viewportX = 0.0f;
+        const float viewportY = 0.0f;
+        const float viewportW = (float)buffer.width;
+        const float viewportH = (float)buffer.height;
+        const float minZ      = 0.0f;
+        const float maxZ      = 1.0f;
+
+        const auto view       = matrix4::lookAtLH(vec3(0, -50, 0), vec3(0, 0, 0), vec3(0, 0, 1));
+        const auto projection = matrix4::perspectiveFovLH((float)M_PI / 4.0f, window_aspect, 1.0f, 500.0f);
+
+
+        buffer.clear(0, 1.0f);
 
         torus.transformation = matrix4::rotationYawPitchRoll(time, time * 0.4f, time * -0.25f);
         torus.transformation[12] = -15 * sinf(time * 1.25f);
@@ -184,11 +478,6 @@ int wmain()
 
             const auto& indices  = object.mesh.indices;
             vertices.assign(object.mesh.vertices.begin(), object.mesh.vertices.end());
-
-            //float angle = (time + i);
-            //auto rotation = matrix4::rotationYawPitchRoll(angle, angle * 0.4f, angle * -0.25f);
-//             if (&object == &teapot)
-//                 rotation = matrix4::identity;
 
             auto transformation = object.transformation * camera_transformation;
             auto transposed     = (object.transformation * view).transposed();
@@ -232,7 +521,7 @@ int wmain()
                 //const auto c1 = v1.n.z * 0.5f + 0.5f;
                 //const auto c2 = v2.n.z * 0.5f + 0.5f;
 
-                triangle_3d(buffer,
+                generic_triangle_3d(buffer,
                     v1.p.x, v1.p.y, v1.p.z,
                     v0.p.x, v0.p.y, v0.p.z,
                     v2.p.x, v2.p.y, v2.p.z,
@@ -243,8 +532,8 @@ int wmain()
         //for (auto& vtx : vertices)
         //    buffer.set(vtx.p.x, vtx.p.y, 1.0f);
 
-        //triangle_3d(buffer, 5, 5, 1, (float)buffer.width - 5, 15, 1, (float)buffer.width - 5, 5, 1, 0, 1, 1);
-        //triangle_3d(buffer, 5, 5, 1, 5, 15, 1, (float)buffer.width - 5, 15, 1, 0, 0, 1);
+        //generic_triangle_3d(buffer, 5, 5, 1,           (float)buffer.width - 5, 15, 1, (float)buffer.width - 5, 5, 1, 0, 1, 1);
+        //generic_triangle_3d(buffer, 5, 5, 1, 5, 15, 1, (float)buffer.width - 5, 15, 1, 0, 0, 1);
 
         //int x = 1, y = 1;
         //for (int i = 0x20; i < 0x80; ++i)
@@ -264,6 +553,42 @@ int wmain()
         //int index = (int)fmodf(time * 10.0f, (float)range) + 0x20;
         //char_2d(buffer, f, 5, 21, index, 1);
 
-        display.update(display_buffer.colors);
+        if (use_ascii_buffer && dither_ascii_buffer)
+            ascii_buffer.dither(dither_with_z_buffer);
+
+        buffer.commit();
+
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        if (ImGui::Begin("Example: Fixed Overlay", nullptr, ImVec2(0, 0), 0.0f, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+            ImGui::Text("Mouse Position: (%.1f,%.1f)", ImGui::GetIO().MousePos.x, ImGui::GetIO().MousePos.y);
+            ImGui::Text("Buffer: (%.0f,%.0f)", (float)buffer.width, (float)buffer.height);
+
+            if (ImGui::Combo("Font", &current_font, "5x7\08x8\08x13"))
+            {
+                ascii_buffer.~ascii_framebuffer_t();
+                switch (current_font)
+                {
+                    default:
+                    case 0: new (&ascii_buffer) ascii_framebuffer_t(display_buffer, ascii_font_5x7);  break;
+                    case 1: new (&ascii_buffer) ascii_framebuffer_t(display_buffer, ascii_font_8x8);  break;
+                    case 2: new (&ascii_buffer) ascii_framebuffer_t(display_buffer, ascii_font_8x13); break;
+                }
+            }
+
+            ImGui::Spacing();
+
+            ImGui::Checkbox("Render to ASCII buffer", &use_ascii_buffer);
+            ImGui::Checkbox("Dither ASCII buffer", &dither_ascii_buffer);
+            ImGui::Checkbox("Dither with Z-buffer", &dither_with_z_buffer);
+            ImGui::Spacing();
+            ImGui::Checkbox("Pause", &pause);
+        }
+        ImGui::End();
+
+        ImGui::Render();
+
+        buffer.present();
     }
 }

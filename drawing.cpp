@@ -4,7 +4,7 @@
 template <typename T> static inline T min(T a, T b, T c) { return std::min(a, std::min(b, c)); }
 template <typename T> static inline T max(T a, T b, T c) { return std::max(a, std::max(b, c)); }
 
-void fill_rect_2d(framebuffer_t& buffer, int x0, int y0, int x1, int y1, float color)
+void generic_fill_rect_2d(framebuffer_t& buffer, int x0, int y0, int x1, int y1, float color)
 {
     if (x0 > x1) std::swap(x0, x1);
     if (y0 > y1) std::swap(y0, y1);
@@ -19,7 +19,7 @@ void fill_rect_2d(framebuffer_t& buffer, int x0, int y0, int x1, int y1, float c
 }
 
 // http://www.codecodex.com/wiki/Bresenham's_line_algorithm
-void circle_2d(framebuffer_t& buffer, int cx, int cy, int radius, float color)
+void generic_circle_2d(framebuffer_t& buffer, int cx, int cy, int radius, float color)
 {
     int f     = 1 - radius;
     int ddF_x = 0;
@@ -55,7 +55,7 @@ void circle_2d(framebuffer_t& buffer, int cx, int cy, int radius, float color)
 }
 
 // https://sites.google.com/site/ruslancray/lab/projects/bresenhamscircleellipsedrawingalgorithm/bresenham-s-circle-ellipse-drawing-algorithm
-void ellipse_2d(framebuffer_t& buffer, int cx, int cy, int rx, int ry, float color)
+void generic_ellipse_2d(framebuffer_t& buffer, int cx, int cy, int rx, int ry, float color)
 {
     const auto a2  = rx * rx;
     const auto b2  = ry * ry;
@@ -92,7 +92,7 @@ void ellipse_2d(framebuffer_t& buffer, int cx, int cy, int rx, int ry, float col
 }
 
 // http://www.roguebasin.com/index.php?title=Bresenham%27s_Line_Algorithm#C.2B.2B
-void line_2d(framebuffer_t& buffer, int x0, int y0, int x1, int y1, float color)
+void generic_line_2d(framebuffer_t& buffer, int x0, int y0, int x1, int y1, float color)
 {
     const auto flip = abs(y1 - y0) > abs(x1 - x0);
     if (flip)
@@ -130,7 +130,7 @@ void line_2d(framebuffer_t& buffer, int x0, int y0, int x1, int y1, float color)
     }
 }
 
-void hline_2d(framebuffer_t& buffer, int x1, int y, int x2, float c)
+void generic_hline_2d(framebuffer_t& buffer, int x1, int y, int x2, float c)
 {
     if (x1 > x2)
         std::swap(x1, x2);
@@ -139,7 +139,7 @@ void hline_2d(framebuffer_t& buffer, int x1, int y, int x2, float c)
         buffer.set(x, y, c);
 }
 
-void vline_2d(framebuffer_t& buffer, int x, int y1, int y2, float c)
+void generic_vline_2d(framebuffer_t& buffer, int x, int y1, int y2, float c)
 {
     if (y1 > y2)
         std::swap(y1, y2);
@@ -149,7 +149,7 @@ void vline_2d(framebuffer_t& buffer, int x, int y1, int y2, float c)
 }
 
 // http://forum.devmaster.net/t/advanced-rasterization/6145
-void triangle_2d(framebuffer_t& buffer, int x0, int y0, int x1, int y1, int x2, int y2, float color)
+void generic_triangle_2d(framebuffer_t& buffer, int x0, int y0, int x1, int y1, int x2, int y2, float color)
 {
     // 28.4 fixed-point coordinates
     const int Y0 = y0 << 4;
@@ -222,7 +222,106 @@ void triangle_2d(framebuffer_t& buffer, int x0, int y0, int x1, int y1, int x2, 
     }
 }
 
-void char_2d(framebuffer_t& buffer, const font_t& font, int x, int y, char c, float color)
+void generic_triangle_2d(framebuffer_t& buffer, const image_t& texture, float x0, float y0, float x1, float y1, float x2, float y2, float u0, float v0, float u1, float v1, float u2, float v2, float c0, float c1, float c2, float a0, float a1, float a2)
+{
+    // 24.8 fixed-point
+    const int precission = 4;
+    const int mask       = (1 << precission) - 1;
+
+    // Fixed-point coordinates
+    const int Y0 = (int)(y0 * static_cast<float>(1 << precission));
+    const int Y1 = (int)(y1 * static_cast<float>(1 << precission));
+    const int Y2 = (int)(y2 * static_cast<float>(1 << precission));
+
+    const int X0 = (int)(x0 * static_cast<float>(1 << precission));
+    const int X1 = (int)(x1 * static_cast<float>(1 << precission));
+    const int X2 = (int)(x2 * static_cast<float>(1 << precission));
+
+    // Deltas
+    const int DX01 = X0 - X1;
+    const int DX12 = X1 - X2;
+    const int DX20 = X2 - X0;
+
+    const int DY01 = Y0 - Y1;
+    const int DY12 = Y1 - Y2;
+    const int DY20 = Y2 - Y0;
+
+    // Fixed-point deltas
+    const int FDX01 = DX01 << precission;
+    const int FDX12 = DX12 << precission;
+    const int FDX20 = DX20 << precission;
+
+    const int FDY01 = DY01 << precission;
+    const int FDY12 = DY12 << precission;
+    const int FDY20 = DY20 << precission;
+
+    // Bounding rectangle
+    int minx = (min(X0, X1, X2) + mask) >> precission;
+    int maxx = (max(X0, X1, X2) + mask) >> precission;
+    int miny = (min(Y0, Y1, Y2) + mask) >> precission;
+    int maxy = (max(Y0, Y1, Y2) + mask) >> precission;
+
+    // Half-edge constants
+    int C0 = DY01 * X0 - DX01 * Y0;
+    int C1 = DY12 * X1 - DX12 * Y1;
+    int C2 = DY20 * X2 - DX20 * Y2;
+
+    // Correct for fill convention
+    if (DY01 < 0 || (DY01 == 0 && DX01 > 0)) C0++;
+    if (DY12 < 0 || (DY12 == 0 && DX12 > 0)) C1++;
+    if (DY20 < 0 || (DY20 == 0 && DX20 > 0)) C2++;
+
+    int CY0 = C0 + DX01 * (miny << precission) - DY01 * (minx << precission);
+    int CY1 = C1 + DX12 * (miny << precission) - DY12 * (minx << precission);
+    int CY2 = C2 + DX20 * (miny << precission) - DY20 * (minx << precission);
+
+    auto iC = 1.0f / (CY0 + CY1 + CY2);
+
+    for (int y = miny; y < maxy; y++)
+    {
+        if (y >= 0 && y < buffer.height)
+        {
+            int CX0 = CY0;
+            int CX1 = CY1;
+            int CX2 = CY2;
+
+            for (int x = minx; x < maxx; x++)
+            {
+                if (x >= 0 && x < buffer.width)
+                {
+                    if (CX0 > 0 && CX1 > 0 && CX2 > 0)
+                    {
+                        const auto c = (c2 * CX0 + c0 * CX1 + c1 * CX2) * iC;
+                        const auto a = (a2 * CX0 + a0 * CX1 + a1 * CX2) * iC;
+                        const auto u = (u2 * CX0 + u0 * CX1 + u1 * CX2) * iC;
+                        const auto v = (v2 * CX0 + v0 * CX1 + v1 * CX2) * iC;
+
+                        const auto tx = std::max(0, std::min(static_cast<int>(u * (texture.width)), texture.width - 1));
+                        const auto ty = std::max(0, std::min(static_cast<int>(v * (texture.height)), texture.height - 1));
+
+                        const auto texture_color = texture.data[tx + ty * texture.pitch] * (1.0f / 255.0f);
+
+                        buffer.blend(x, y, c, texture_color * a);
+                    }
+                }
+                else if (x >= buffer.width)
+                    break;
+
+                CX0 -= FDY01;
+                CX1 -= FDY12;
+                CX2 -= FDY20;
+            }
+        }
+        else if (y >= buffer.height)
+            return;
+
+        CY0 += FDX01;
+        CY1 += FDX12;
+        CY2 += FDX20;
+    }
+}
+
+void generic_char_2d(framebuffer_t& buffer, const font_t& font, int x, int y, char c, float color)
 {
     auto data = font.find(c);
     if (!data)
@@ -279,7 +378,7 @@ void char_2d(framebuffer_t& buffer, const font_t& font, int x, int y, char c, fl
 }
 
 // http://forum.devmaster.net/t/advanced-rasterization/6145
-void triangle_3d(framebuffer_t& buffer,
+void generic_triangle_3d(framebuffer_t& buffer,
     float x0, float y0, float z0,
     float x1, float y1, float z1,
     float x2, float y2, float z2,
@@ -318,6 +417,9 @@ void triangle_3d(framebuffer_t& buffer,
     int miny = (min(Y0, Y1, Y2) + 0x0F) >> 4;
     int maxy = (max(Y0, Y1, Y2) + 0x0F) >> 4;
 
+    if (minx >= buffer.width  || maxx < 0) return;
+    if (miny >= buffer.height || maxy < 0) return;
+
     // Half-edge constants
     int C0 = DY01 * X0 - DX01 * Y0;
     int C1 = DY12 * X1 - DX12 * Y1;
@@ -332,37 +434,53 @@ void triangle_3d(framebuffer_t& buffer,
     int CY1 = C1 + DX12 * (miny << 4) - DY12 * (minx << 4);
     int CY2 = C2 + DX20 * (miny << 4) - DY20 * (minx << 4);
 
-    int  C   = CY0 + CY1 + CY2;
-    //auto IC  = (1ll << (32 + 12)) / C;
+    if (miny < 0)
+    {
+        auto diff = -miny;
+        CY0 += FDX01 * diff;
+        CY1 += FDX12 * diff;
+        CY2 += FDX20 * diff;
+        miny = 0;
+    }
+
+    if (maxy >= buffer.height)
+        maxy = buffer.height - 1;
+
+    const auto offset_x = (minx < 0) ? -minx : 0;
+    if (offset_x)
+        minx = 0;
+
+    const auto C  = CY0 + CY1 + CY2;
+    if (C == 0)
+        return;
+
+    const auto iC  = 1.0f / C;
+    const auto iZ0 = 1.0f / z0;
+    const auto iZ1 = 1.0f / z1;
+    const auto iZ2 = 1.0f / z2;
 
     for (int y = miny; y < maxy; y++)
     {
-        if (y >= 0 && y < buffer.height)
+        int CX0 = CY0 - FDY01 * offset_x;
+        int CX1 = CY1 - FDY12 * offset_x;
+        int CX2 = CY2 - FDY20 * offset_x;
+
+        for (int x = minx; x < maxx; x++)
         {
-            int CX0 = CY0;
-            int CX1 = CY1;
-            int CX2 = CY2;
-
-            for (int x = minx; x < maxx; x++)
             {
-                if (x >= 0 && x < buffer.width)
+                if (CX0 > 0 && CX1 > 0 && CX2 > 0)
                 {
-                    if (CX0 > 0 && CX1 > 0 && CX2 > 0)
-                    {
-                        //auto c = (c2 * CX0 + c0 * CX1 + c1 * CX2) * IC >> (12 + 32);
+                    auto c =         (c2  * CX0 + c0  * CX1 + c1  * CX2) * iC;
+                    auto z = 1.0f / ((iZ2 * CX0 + iZ0 * CX1 + iZ1 * CX2) * iC);
 
-                        auto c = (c2 * CX0 + c0 * CX1 + c1 * CX2) / C;
-                        auto z = 1.0f / (((1.0f / z2) * CX0 + (1.0f / z0) * CX1 + (1.0f / z1) * CX2) / C);
-
-                        if (z >= 0.0f && z <= 1.0f)
-                            buffer.set(x, y, z, c);
-                    }
+                    if (z >= 0.0f && z <= 1.0f)
+                        buffer.set(x, y, z, c);
                 }
-
-                CX0 -= FDY01;
-                CX1 -= FDY12;
-                CX2 -= FDY20;
             }
+
+            CX0 -= FDY01;
+            CX1 -= FDY12;
+            CX2 -= FDY20;
         }
 
         CY0 += FDX01;

@@ -163,6 +163,9 @@
     <ClCompile Include="font_5x7.cpp" />
     <ClCompile Include="font_8x13.cpp" />
     <ClCompile Include="font_8x8.cpp" />
+    <ClCompile Include="imgui\imgui.cpp" />
+    <ClCompile Include="imgui\imgui_demo.cpp" />
+    <ClCompile Include="imgui\imgui_draw.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="mesh.cpp" />
     <ClCompile Include="toaster\PixelToaster.cpp" />
@@ -170,6 +173,12 @@
   <ItemGroup>
     <ClInclude Include="drawing.h" />
     <ClInclude Include="font.h" />
+    <ClInclude Include="imgui\imconfig.h" />
+    <ClInclude Include="imgui\imgui.h" />
+    <ClInclude Include="imgui\imgui_internal.h" />
+    <ClInclude Include="imgui\stb_rect_pack.h" />
+    <ClInclude Include="imgui\stb_textedit.h" />
+    <ClInclude Include="imgui\stb_truetype.h" />
     <ClInclude Include="math.h" />
     <ClInclude Include="mesh.h" />
     <ClInclude Include="toaster\PixelToaster.h" />
