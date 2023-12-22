@@ -1,5 +1,5 @@
 // Windows Platform
-// Copyright © 2006-2007 Glenn Fiedler
+// Copyright ï¿½ 2006-2007 Glenn Fiedler
 // Part of the PixelToaster Framebuffer Library - http://www.pixeltoaster.com
 
 #define VC_EXTRALEAN
@@ -9,10 +9,6 @@
 #include <windowsx.h>
 
 #include <d3d9.h>
-
-#ifndef __MINGW32__
-#include <d3dx9.h>
-#endif
 
 #ifdef _MSC_VER
 #pragma comment( lib, "d3d9.lib" )
@@ -1240,14 +1236,14 @@ namespace PixelToaster
 			const float h = description.Height - 0.5f;
 
 			Vertex quad[4];
-			quad[0].pos = D3DXVECTOR4(-0.5f, -0.5f, 0.5f, 1.0f);
-			quad[0].tex = D3DXVECTOR2(0.f, 0.f);
-			quad[1].pos = D3DXVECTOR4(w, -0.5f, 0.5f, 1.0f);
-			quad[1].tex = D3DXVECTOR2(1.f, 0.f);
-			quad[2].pos = D3DXVECTOR4(-0.5f, h, 0.5f, 1.0f);
-			quad[2].tex = D3DXVECTOR2(0.f, 1.f);
-			quad[3].pos = D3DXVECTOR4(w, h, 0.5f, 1.0f);
-			quad[3].tex = D3DXVECTOR2(1.f, 1.f);
+			quad[0].pos = Vector4{-0.5f, -0.5f, 0.5f, 1.0f};
+			quad[0].tex = Vector2{0.f, 0.f};
+			quad[1].pos = Vector4{w, -0.5f, 0.5f, 1.0f};
+			quad[1].tex = Vector2{1.f, 0.f};
+			quad[2].pos = Vector4{-0.5f, h, 0.5f, 1.0f};
+			quad[2].tex = Vector2{0.f, 1.f};
+			quad[3].pos = Vector4{w, h, 0.5f, 1.0f};
+			quad[3].tex = Vector2{1.f, 1.f};
 
 			device->SetRenderState(D3DRS_ZENABLE, FALSE);
 			device->SetFVF(FVF);
@@ -1257,10 +1253,20 @@ namespace PixelToaster
 
 	private:
 
-		struct Vertex
+		struct alignas(16) Vector4
 		{
-			D3DXVECTOR4 pos;
-			D3DXVECTOR2 tex;
+			float x, y, z, w;
+		};
+
+		struct alignas(16) Vector2
+        {
+		    float x, y;
+		};
+
+		struct alignas(16) Vertex
+		{
+			Vector4 pos;
+			Vector2 tex;
 		};
 		enum { FVF = D3DFVF_XYZRHW | D3DFVF_TEX1 };
 
@@ -1271,7 +1277,6 @@ namespace PixelToaster
 		SmartI<IDirect3DDevice9> device;
 		SmartI<IDirect3DTexture9> primaryTexture;
 		SmartI<IDirect3DTexture9> thingy;
-		SmartI<ID3DXEffect> effect;
 
 		int width;
 		int height;
