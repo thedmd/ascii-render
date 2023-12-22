@@ -22,6 +22,11 @@ void generic_triangle_3d(framebuffer_t& buffer,
     float x2, float y2, float z2,
     float c0, float c1, float c2);
 
+void generic_line_3d(framebuffer_t& buffer,
+    float x0, float y0, float z0,
+    float x1, float y1, float z1,
+    float c0, float c1);
+
 struct image_t
 {
     const uint8_t*  data;
@@ -71,16 +76,21 @@ struct framebuffer_t
 
     void set(int x, int y, float c)
     {
-        set_color(x, y, c);
+        if (!clip(x, y))
+            set_color(x, y, c);
     }
 
     void blend(int x, int y, float c, float a)
     {
-        blend_color(x, y, c, a);
+        if (!clip(x, y))
+            blend_color(x, y, c, a);
     }
 
     void set(int x, int y, float z, float c)
     {
+        if (clip(x, y))
+            return;
+
         auto& d = depth[width * y + x];
         if (z > d)
             return;
@@ -111,5 +121,11 @@ protected:
     virtual void blend_color(int x, int y, float c, float a) = 0;
     virtual void commit_impl() = 0;
     virtual void present_impl() = 0;
+
+private:
+    bool clip(int x, int y) const
+    {
+        return x < 0 || y < 0 || x >= width || y >= height;
+    }
 };
 

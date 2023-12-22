@@ -1,6 +1,8 @@
 #include "drawing.h"
 #include <algorithm>
 
+using std::min;
+using std::max;
 template <typename T> static inline T min(T a, T b, T c) { return std::min(a, std::min(b, c)); }
 template <typename T> static inline T max(T a, T b, T c) { return std::max(a, std::max(b, c)); }
 
@@ -465,6 +467,7 @@ void generic_triangle_3d(framebuffer_t& buffer,
         int CX1 = CY1 - FDY12 * offset_x;
         int CX2 = CY2 - FDY20 * offset_x;
 
+    //#pragma omp parallel for
         for (int x = minx; x < maxx; x++)
         {
             {
@@ -486,5 +489,66 @@ void generic_triangle_3d(framebuffer_t& buffer,
         CY0 += FDX01;
         CY1 += FDX12;
         CY2 += FDX20;
+    }
+}
+
+void generic_line_3d(framebuffer_t& buffer,
+    float x0, float y0, float z0,
+    float x1, float y1, float z1,
+    float c0, float c1)
+{
+    // 28.4 fixed-point coordinates
+    int X0 = (int)(x0 * 16.0f);
+    int X1 = (int)(x1 * 16.0f);
+    int Y0 = (int)(y0 * 16.0f);
+    int Y1 = (int)(y1 * 16.0f);
+
+    // 8.24 fixed-point coordinate
+    int Z0 = (int)(1.0f / z0 * 0x1000000);
+    int Z1 = (int)(1.0f / z1 * 0x1000000);
+
+    // Swap X/Y if Y is major axis, so X is always major axis
+    const auto flip = abs(Y1 - Y0) > abs(X1 - X0);
+    if (flip)
+    {
+        std::swap(X0, Y0);
+        std::swap(X1, Y1);
+    }
+
+    // Always draw left to right
+    if (X0 > X1)
+    {
+        std::swap(X0, X1);
+        std::swap(Y0, Y1);
+        std::swap(Z0, Z1);
+        std::swap(c0, c1);
+    }
+
+    const auto ONE  = 16; // sub-pixel precission
+    const auto DX   = X1 - X0;
+    const auto DY   = abs(Y1 - Y0);
+    const auto step = Y0 < Y1 ? 1 : -1;
+
+    auto error = ONE * DX / 2;
+    auto Y = Y0;
+
+    for (int X = X0; X < X1; X += ONE)
+    {
+        int Z = Z0 + (Z1 - Z0) * (X - X0) / DX;     // 1/z in 8.24 fixed-point coordinate
+
+        auto z = 1.0f / (Z * (1.0f / 0x1000000));   // reconstruct z
+        auto c = c0 + (c1 - c0) * (X - X0) / DX;    // interpolate color
+
+        if (flip)
+            buffer.set(Y >> 4, X >> 4, z, c);       // draw pixel (x and y are swapped)
+        else
+            buffer.set(X >> 4, Y >> 4, z, c);       // draw pixel
+
+        error = error - DY * ONE;
+        while (error < 0)
+        {
+            Y     += step;
+            error += DX;
+        }
     }
 }

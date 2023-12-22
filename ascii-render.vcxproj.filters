@@ -19,6 +19,9 @@
     <Filter Include="mesh">
       <UniqueIdentifier>{317dece4-ddc7-4381-8928-8967e84d50c8}</UniqueIdentifier>
     </Filter>
+    <Filter Include="support">
+      <UniqueIdentifier>{51b45bd5-73b2-4f4d-8bf1-f8536330e040}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="toaster\PixelToaster.cpp">
@@ -101,5 +104,10 @@
     <None Include="math.inl">
       <Filter>math</Filter>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="support\ascii-render.natvis">
+      <Filter>support</Filter>
+    </Natvis>
   </ItemGroup>
 </Project>
