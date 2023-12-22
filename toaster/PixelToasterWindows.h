@@ -1383,6 +1383,14 @@ namespace PixelToaster
 			return true;
 		}
 
+		void zoom( int factor ) override
+		{
+			if (device)
+            {
+                window->zoom(static_cast<float>(factor));
+            }
+		}
+
 		void title( const char title[] )
 		{
 			DisplayAdapter::title( title );

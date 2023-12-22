@@ -785,6 +785,8 @@ assert( ! (a == b) );
         virtual bool update( const FloatingPointPixel pixels[], const Rectangle* dirtyBox = 0 ) = 0;
         virtual bool update( const TrueColorPixel pixels[], const Rectangle* dirtyBox = 0 ) = 0;
 
+        virtual void zoom( int factor ) = 0;
+
         virtual const char * title() const = 0;
 		virtual void title( const char title[] ) = 0;
         virtual int width() const = 0;
@@ -994,6 +996,12 @@ while ( display.open() )
         }
 
 #endif
+
+        void zoom( int factor )
+        {
+            if (internal)
+                internal->zoom( factor );
+        }
 
         /// Get display title
 
